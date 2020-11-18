@@ -1,0 +1,380 @@
+import numpy as np
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+from dash.dependencies import Input, Output
+import pandas as pd
+from tensorflow import keras
+encoder_model = keras.models.load_model('seq2seq_encoded_v1.h5')
+decoder_model = keras.models.load_model('seq2seq_decoded_v1.h5')
+
+def clean_text(text):
+    import re
+    text = text.lower()
+    text = re.sub(r"i'm", "i am", text)
+    text = re.sub(r"he's", "he is", text)
+    text = re.sub(r"she's", "she is", text)
+    text = re.sub(r"that's", "that is", text)
+    text = re.sub(r"what's", "what is", text)
+    text = re.sub(r"where's", "where is", text)
+    text = re.sub(r"\'ll", " will", text)
+    text = re.sub(r"\'wii", " will", text)
+    text = re.sub(r"\'ve", " have", text)
+    text = re.sub(r"\'re", " are", text)
+    text = re.sub(r"\'d", " would", text)
+    text = re.sub(r"won't", "will not", text)
+    text = re.sub(r"can't", "cannot", text)
+    #text = re.sub(r"st","street",text)
+    #text = re.sub(r"domestreetic","domestic",text)
+    text = re.sub(r'br','',text)
+    text = re.sub(r'^cad','',text)
+    text = re.sub(r'[0-9]','',text)
+    #text = re.sub(r'streetreet','street',text)
+    text = re.sub(r"[-()\"#/@;:<>{}+=~|.?,]", "", text)
+    return text
+batch_size = 64  # Batch size for training.
+epochs = 500  # Number of epochs to train for.
+latent_dim = 512  # Latent dimensionality of the encoding space.
+num_samples = 1000  # Number of samples to train on.
+
+data=pd.read_csv('nibrs.csv')
+
+data['FullName']=data['FullName'].astype(str)
+data['Description']=data['Description'].astype(str)
+data['cnvDESC']=data['cnvDESC'].astype(str)
+data['CADcmt']=data['CADcmt'].astype(str)
+data['Location']=data['Location'].astype(str)
+data['Txt']=data['Txt'].astype(str)
+
+data['x'] = data[['FullName', 'Description','cnvDESC','Location','CADcmt']].apply(lambda x: ' '.join(x), axis = 1) 
+data.x=data.x.apply(clean_text)
+data.Txt=data.Txt.apply(clean_text)
+data.x=data.x.apply(lambda x : x[:500])
+input_texts = data.x.to_list()
+data.Txt=data.Txt.apply(lambda x : x[:500])
+target=data.Txt.to_list()
+input_characters = set()
+target_characters = set()
+target_texts = []
+for i in target:
+    i = '\a' + i + '\e'
+    target_texts.append(i)
+for line in target_texts[: min(num_samples, len(target_texts) - 1)]:
+    
+
+    for char in line:
+        if char not in target_characters:
+            target_characters.add(char)
+            
+for line in input_texts[: min(num_samples, len(input_texts) - 1)]:
+    
+
+    for char in line:
+        if char not in input_characters:
+            input_characters.add(char)
+
+input_characters = sorted(list(input_characters))
+target_characters = sorted(list(target_characters))
+num_encoder_tokens = len(input_characters)
+num_decoder_tokens = len(target_characters)
+max_encoder_seq_length = max([len(txt) for txt in input_texts])
+max_decoder_seq_length = max([len(txt) for txt in target_texts])
+
+
+
+input_token_index = dict(
+    [(char, i) for i, char in enumerate(input_characters)])
+target_token_index = dict(
+    [(char, i) for i, char in enumerate(target_characters)])
+
+def decode_sequence(input_seq):
+    # Encode the input as state vectors.
+    states_value = encoder_model.predict(input_seq)
+
+    # Generate empty target sequence of length 1.
+    target_seq = np.zeros((1, 1, num_decoder_tokens))
+    # Populate the first character of target sequence with the start character.
+    target_seq[0, 0, target_token_index['\t']] = 1.
+
+    # Sampling loop for a batch of sequences
+    # (to simplify, here we assume a batch of size 1).
+    stop_condition = False
+    decoded_sentence = ''
+    while not stop_condition:
+        output_tokens, h, c = decoder_model.predict(
+            [target_seq] + states_value)
+
+        # Sample a token
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+        sampled_char = reverse_target_char_index[sampled_token_index]
+        decoded_sentence += sampled_char
+
+        # Exit condition: either hit max length
+        # or find stop character.
+        if (sampled_char == '\n' or
+           len(decoded_sentence) > max_decoder_seq_length):
+            stop_condition = True
+
+        # Update the target sequence (of length 1).
+        target_seq = np.zeros((1, 1, num_decoder_tokens))
+        target_seq[0, 0, sampled_token_index] = 1.
+
+        # Update states
+        states_value = [h, c]
+
+    return decoded_sentence
+
+reverse_input_char_index = dict(
+    (i, char) for char, i in input_token_index.items())
+reverse_target_char_index = dict(
+    (i, char) for char, i in target_token_index.items())
+
+
+'''input_text= 'nolasco jorge alberto molina  suspect drunk in public  patriot cir dispatcherk \r\n sig  x\r\n\r\ndispatcherp \r\nenroute to adc streetarting mileage  at \r\n\r\ndispatcherp \r\n at adc \r\n\r\ndispatcherk \r\nper unit  warrant obtained \r\n\r\ndispatcherk \r\n back at eba\r\n'
+
+
+
+data1=np.zeros((500,32))
+for t, char in enumerate(input_text):
+    
+    data1[ t, input_token_index[char]] = 1.
+data1[ t + 1:, input_token_index[' ']] = 1.
+
+
+
+
+data1=np.expand_dims(data1,axis=0)
+
+
+decoded_sentence = decode_sequence(data1)
+print('-')
+print('Input sentence:', input_text)
+print('/n')
+print('Decoded sentence:', decoded_sentence)'''
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+app = dash.Dash()
+
+app.layout = html.Div(
+        
+   [html.Div([
+    html.H1("AI REPORT GENERATOR",style={
+            'textAlign': 'center'
+            
+        }),html.Label('ENTER ROW NUMBER OF DATA', style={"font-weight": "bold"}),
+    dcc.Input(
+        id='row',
+        placeholder='ENTER THE ROW NUMBER',
+        type="number",
+        value=None,
+        
+    ),html.Button('Submit', id='submit-val',n_clicks=0),
+    
+    html.Br(),
+    html.Br(),
+    html.Div(id='result')
+    ],style={'padding': 10})
+    
+    ,html.Div([
+            
+    html.Label('FULL NAME ', style={"font-weight": "bold"}),
+    html.Div(id='fullname'),
+     
+    html.Br(),
+    html.Br(),
+    
+    html.Label('DESCRIPTION', style={"font-weight": "bold"}),
+    html.Div(id='description'),
+    
+    html.Br(),
+    html.Br(),
+    
+    html.Label('CNV_DESC', style={"font-weight": "bold"}),
+    html.Div(id='cnvdesc'),
+    
+    html.Br(),
+    html.Br(),
+    
+    html.Label('LOCATION', style={"font-weight": "bold"}),
+    html.Div(id='location'),
+    
+    html.Br(),
+    html.Br(),
+    
+    html.Label('CAD_CMT', style={"font-weight": "bold"}),
+    html.Div(id='cad_cmt'),
+    
+    html.Br(),
+    html.Br(),
+    
+    
+    html.Label('ACTUAL DB TXT', style={"font-weight": "bold"}),
+    html.Div(id='db'),
+    
+    html.Br(),
+    html.Br(),
+    
+    
+    html.Label('AI OUTPUT ', style={"font-weight": "bold"}),
+            
+            ],style={'padding': 10}),
+    
+    html.Div(id='output',style={'padding':10})],style={'padding': 10}
+    
+    
+    )
+    
+
+
+@app.callback(
+    Output('result', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')]
+    
+   
+)
+
+def update_result(n_clicks,value):
+    pass
+
+
+@app.callback(
+       Output('fullname', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')] 
+        
+        
+        
+        )
+def update_fullname(n_clicks,value):
+    res=data['FullName'].loc[value]
+    return res
+
+
+@app.callback(
+       Output('description', 'children'),
+    
+ [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')] 
+        
+        
+        
+        
+        
+        )
+def update_fullname(n_clicks,value):
+    res=data['Description'].loc[value]
+    return res
+
+
+@app.callback(
+       Output('cnvdesc', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')] 
+        
+        
+        
+        )
+def update_fullname(n_clicks,value):
+    res=data['cnvDESC'].loc[value]
+    return res
+
+
+@app.callback(
+       Output('location', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')] 
+        
+        
+        
+        )
+def update_fullname(n_clicks,value):
+    res=data['Location'].loc[value]
+    return res
+
+@app.callback(
+       Output('cad_cmt', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')] 
+        
+        
+        
+        )
+def update_fullname(n_clicks,value):
+    res=data['CADcmt'].loc[value]
+    return res
+
+@app.callback(
+       Output('db', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')] 
+        
+        
+        
+        )
+def update_fullname(n_clicks,value):
+   res=target_texts[value]
+   return res
+
+
+@app.callback(
+    Output('output', 'children'),
+    
+    
+     [dash.dependencies.Input('submit-val','n_clicks')],
+     state=[dash.dependencies.State('row','value')]
+    
+   
+)
+def update_ai(n_clicks,value):
+    res=input_texts[value]
+    res=str(res)
+    data1=np.zeros((500,32))
+    
+    for t, char in enumerate(res):
+    
+        data1[ t, input_token_index[char]] = 1.
+    data1[ t + 1:, input_token_index[' ']] = 1.
+
+
+
+
+    data1=np.expand_dims(data1,axis=0)
+
+
+    decoded_sentence = decode_sequence(data1)
+    
+    return decoded_sentence
+    
+
+if __name__ == '__main__':
+        app.run_server(host='0.0.0.0', debug=False)
